@@ -1,0 +1,336 @@
+import sys
+
+from PIL import Image
+
+from config import config
+from file_ops import readfile, saveimage
+from math_ops import getpercent
+
+
+def embedd_image(path1, path2):
+    img1 = readfile(path1)
+    img2 = readfile(path2)
+    img2 =img2.convert("RGB")
+    img1 =img1.convert("RGB")
+    validate_image(img1, img2)
+    embedd(img1, img2)
+
+
+def validate_image(img1, img2):
+    c1 = pixel_count(img1)[0]
+    c2 = pixel_count(img2)[0]
+    
+    if c2 > config.BASE_RES:
+        print(f'Please make the count of the pixels of second image to 1920x1080. You can use https://www.resizepixel.com/')
+        quit()
+    if pixel_count(img1)[0] < pixel_count(img2)[0]+8:
+        print("Size of Primary image should greater than second image!")
+        quit()
+
+
+def pixel_count(img):
+    r, c = img.size
+    return r*c, r, c
+
+
+def addsize(px, start, r):
+    b = bin(r)[2:]
+    b = ((config.NO_OF_IMG_PIXELS*3)-len(b))*"0"+b
+    ind = 0
+    for i in range(start, config.NO_OF_IMG_PIXELS+start):
+        p = list(px[0, i])
+        for j in range(3):
+            if b[ind] == '0':
+                if p[j] % 2 != 0:
+                    p[j] -= 1
+            else:
+                if p[j] % 2 != 1:
+                    p[j] += 1
+            ind += 1
+        px[0, i] = tuple(p)
+
+
+def embedd(im1, im2):
+    im1_pixel_count, r1, c1 = pixel_count(im1)
+    im2_pixel_count, r2, c2 = pixel_count(im2)
+    px1 = im1.load()
+    px2 = im2.load()
+    addsize(px1, 0, r2)
+    addsize(px1, 4, c2)
+    
+    for ind in range(8, im2_pixel_count+8):
+        sys.stdout.write("\rEmbedding image " +
+                         str(getpercent(ind, im2_pixel_count))+"% done")
+        sys.stdout.flush()
+        i1 = ind//c1
+        j1 = ind % c1
+        i2 = (ind-8)//c2
+        j2 = (ind-8) % c2
+        pix1 = list(px1[i1, j1])
+        pix2 = list(px2[i2, j2])
+        # for k in range(3):
+        #     pix1[k] = insert_num(pix1[k], pix2[k])
+        px1[i1, j1] = _merge_rgb(pix1,pix2)
+    sys.stdout.flush()
+    saveimage(im1)
+
+
+def extractsize(px, start, n):
+    b = ""
+    for i in range(start, n+start):
+        p = px[0, i]
+        for j in range(3):
+            b += bin(p[j])[-1]
+
+    return int(b, 2)
+
+
+def extract_image(path1):
+    img = readfile(path1)
+    r1, c1 = img.size
+    px = img.load()
+    r2 = extractsize(px, 0, config.NO_OF_IMG_PIXELS)
+    c2 = extractsize(px, 4, config.NO_OF_IMG_PIXELS)
+    newimg = Image.new(img.mode, (r2, c2))
+    px2 = newimg.load()
+    for ind in range(8, (r2*c2)+8):
+        sys.stdout.write("\rExtracting image " +
+                         str(getpercent(ind, (r2*c2)))+"% done")
+        sys.stdout.flush()
+        i1 = ind//c1
+        j1 = ind % c1
+        i2 = (ind-8)//c2
+        j2 = (ind-8) % c2
+        pix1 = px[i1, j1]
+        pix2 = list(px2[i2, j2])
+        # for k in range(3):
+        #     pix2[k] = extract_num(pix1[k])
+        px2[i2, j2] = _unmerge_rgb(pix1)
+    sys.stdout.flush()
+    saveimage(newimg)
+
+def _int_to_bin(rgb):
+    """Convert an integer tuple to a binary (string) tuple.
+
+    :param rgb: An integer tuple like (220, 110, 96)
+    :return: A string tuple like ("00101010", "11101011", "00010110")
+    """
+    r, g, b = rgb
+    return f'{r:08b}', f'{g:08b}', f'{b:08b}'
+
+def _bin_to_int(rgb):
+    """Convert a binary (string) tuple to an integer tuple.
+
+    :param rgb: A string tuple like ("00101010", "11101011", "00010110")
+    :return: Return an int tuple like (220, 110, 96)
+    """
+    r, g, b = rgb
+    return int(r, 2), int(g, 2), int(b, 2)
+
+def _merge_rgb(rgb1, rgb2):
+    """Merge two RGB tuples.
+
+    :param rgb1: An integer tuple like (220, 110, 96)
+    :param rgb2: An integer tuple like (240, 95, 105)
+    :return: An integer tuple with the two RGB values merged.
+    """
+    r1, g1, b1 = _int_to_bin(rgb1)
+    r2, g2, b2 = _int_to_bin(rgb2)
+    rgb = r1[:4] + r2[:4], g1[:4] + g2[:4], b1[:4] + b2[:4]
+    return _bin_to_int(rgb)
+
+def _unmerge_rgb(rgb):
+    """Unmerge RGB.
+
+    :param rgb: An integer tuple like (220, 110, 96)
+    :return: An integer tuple with the two RGB values merged.
+    """
+    r, g, b = _int_to_bin(rgb)
+    # Extract the last 4 bits (corresponding to the hidden image)
+    # Concatenate 4 zero bits because we are working with 8 bit
+    new_rgb = r[4:] + '0000', g[4:] + '0000', b[4:] + '0000'
+    return _bin_to_int(new_rgb)
+import sys
+
+from config import config
+from file_ops import readfile, readtext, write_to_file
+from image_steg import embedd_image, extract_image
+from text import embedd, extract
+
+
+def showusage():
+    name = sys.argv[0]
+
+    print(f"""\nUsage:
+    \t{name} -h --> Manual page
+\t{name} -em-image -im1 <im1> -im2 <im2> -o <oim> --> to embedd the image(im2) in the given image(im1), size(im1)>size(im2)
+\t{name} -em -i <im> -t <m> -o <oim> --> to embedd the given message in the given image
+\t{name} -em -i <im> -f <itf> -o <oim> --> to embedd the content of the given textfile in the given image
+\t{name} -ex-image -i <im> -o <otf> --> to extract the hidden image in the given image and saving it in a new image file
+\t{name} -ex -i <im> -o <otf> --> to extract the hidden message in the given image and writing it to the output path file
+\t{name} -ex -i <im> -pr --> to extract the hidden message in the given image and writing it to the terminal
+\nTags:
+\t-em: to embedd text into image
+\t-ex: to extract the text from image
+\t-i : input image
+\t-o : output path
+\t-t : input text from terminal
+\t-f : input text from a file
+\t-pr: print to the terminal
+\nTerms:
+\tim: input image
+\tm: messge to be hidden
+\titf: input textfile
+\toim: output image
+\top: output textfile
+    """)
+    quit()
+
+
+def show_output(msg):
+    if sys.argv[4] == '-pr':
+        print("\nExtracted text: \n"+msg+"\n")
+    else:
+        if write_to_file(sys.argv[5], msg):
+            print("Successfully written to file")
+
+
+def startprocess(path, text, tag):
+    if tag == '-em':
+        img = readfile(path)
+        embedd(img, text)
+    elif tag == '-ex':
+        img = readfile(path)
+        msg = extract(img)
+        show_output(msg)
+    elif tag == '-em-image':
+        embedd_image(path, text)
+    elif tag == '-ex-image':
+        extract_image(path)
+
+
+def validateargs(args):
+    if len(args) == 0 or args[0] == '-h' or (args[0] != '-ex' and args[0] != '-em' and args[0] != '-em-image' and args[0] != '-ex-image'):
+        return False
+    if args[0] == '-em-image':
+        if args[1] != '-im1' or args[3] != "-im2" or args[5] != "-o":
+            return False
+        return True
+    if args[0] == '-ex-image':
+        if args[1] != '-i' or args[3] != "-o":
+            return False
+        return True
+    if args[0] == '-ex':
+        if len(args) == 4:
+            if args[1] != '-i' or args[3] != '-pr':
+                return False
+            return True
+        if len(args) < 5 or args[1] != '-i' or args[3] != '-o':
+            return False
+    if args[0] == '-em':
+        if len(args) < 7 or args[1] != '-i' or (args[3] != '-t' and args[3] != '-f') or args[5] != '-o':
+            return False
+    return True
+
+
+def main():
+    args = sys.argv[1:]
+    flag = validateargs(args)
+    if not flag:
+        showusage()
+    text = ''
+    if args[0] == '-em' or args[0] == '-em-image':
+        config.setoutputpath(args[6])
+        if args[3] == '-f':
+            text = readtext(args[4])
+        else:
+            text = args[4]
+    if args[0] == '-ex-image':
+        config.setoutputpath(args[4])
+    startprocess(args[2], text, args[0])
+
+
+if _name_ == "_main_":
+    main()
+from config import config
+from file_ops import saveimage
+from math_ops import getbinarys, getstr, insertbit
+
+
+def embedd(img, text):
+    maxr, maxc = img.size
+    bins = getbinarys(text)
+    px = img.load()
+    addsize(px, len(bins))
+    r, c = 0, config.NO_OF_SIZE_PIXELS
+    colorind = 0
+    print("\nEmbedding the text in the image...")
+    for i in bins:
+        for k in i:
+            if colorind == 3:
+                colorind = 0
+                c += 1
+                if c == maxc:
+                    c = 0
+                    r += 1
+                    if r == maxr:
+                        print("Text size is greater than image size!")
+            cur = list(px[r, c])
+            cur[colorind] = insertbit(cur[colorind], k)
+            px[r, c] = tuple(cur)
+            colorind += 1
+    # p = ""
+    saveimage(img)
+
+
+def addsize(px, s):
+    s = bin(s)[2:]
+    s = (config.NO_OF_SIZE_BITS-len(s))*"0"+s
+    k = 0
+    for i in range(config.NO_OF_SIZE_PIXELS):
+        p = list(px[0, i])
+        for j in range(3):
+            p[j] = insertbit(p[j], s[k])
+            k += 1
+        px[0, i] = tuple(p)
+
+
+def extractsize(px):
+    b = ""
+    for i in range(config.NO_OF_SIZE_PIXELS):
+        p = px[0, i]
+        for j in range(3):
+            b += bin(p[j])[-1]
+
+    return int(b, 2)
+
+
+def extract_message(img):
+    px = img.load()
+    maxr, maxc = img.size
+    s = extractsize(px)
+    r, c = 0, config.NO_OF_SIZE_PIXELS
+    colorind = 0
+    arr = []
+    print("\nExtracting the text from the image...")
+    for i in range(s):
+        b = ""
+        for k in range(config.NO_OF_BITS):
+            if colorind == 3:
+                colorind = 0
+                c += 1
+                if c == maxc:
+                    c = 0
+                    r += 1
+                    if r == maxr:
+                        print("Text size is greater than image size!")
+            cur = list(px[r, c])
+            b += bin(cur[colorind])[-1]
+            colorind += 1
+        arr.append(int(b, 2))
+    return getstr(arr)
+
+
+def extract(img):
+    msg = extract_message(img)
+    return msg
